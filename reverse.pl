@@ -11,16 +11,22 @@ use IO::Reverse;
 
 my $fileName='';
 my $help=0;
+my $debug=0;
 
 GetOptions(
 	"filename=s" => \$fileName,
+	"debug!" => \$debug,
 	"h|help!" => \$help
 ) or usage(1);
 
 usage(1) if $help;
 
 my $f = IO::Reverse->new( 
-	FILENAME => $fileName
+	{ 
+		FILENAME => $fileName ,
+		CHUNKSIZE => 1024,
+		DEBUG => $debug,
+	}
 );
 
 while ( my $line = $f->next ) {

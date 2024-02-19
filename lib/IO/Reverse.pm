@@ -118,43 +118,148 @@ use Exporter qw(import);
 #our @EXPORT = qw();
 our @ISA=qw(Exporter);
 
+my $debug=0;
+
 sub new {
-	my ($class, %args) = @_;
+	my ($class, $args) = @_;
 	my $fh = IO::File->new;
 
-	$fh->open($args{FILENAME})  || die "Reverse: could not open file: $args{FILENAME} - $!\n";
-	$args{FH}=$fh;
-	$args{F_SIZE} = -s $args{FILENAME};
-	$args{F_OFFSET} = -2; # offset continually decrements to allow reverse seek
+	$fh->open($args->{FILENAME})  || die "Reverse: could not open file: $args->{FILENAME} - $!\n";
+	$args->{FH}=$fh;
+	$args->{F_SIZE} = -s $args->{FILENAME};
+	# offset starts at penultimate character in file
+	$args->{CHUNKSIZE} ||= 1024;
+	#$args->{F_OFFSET} = ($args->{CHUNKSIZE} + 2) * -1; # offset continually decrements to allow reverse seek
+	$args->{F_OFFSET} = $args->{CHUNKSIZE} * -1; # offset continually decrements to allow reverse seek
+	$args->{BOF} = 0; # true/false - have we reached beginning of file
+	$args->{SEND_BOF} = 0; # true/false - have we reached beginning of file
+
+	#die "CHUNKSIZE: $args->{CHUNKSIZE}\n";
 
 	# set to EOF minus offset 
 	# offset to avoid the end of line/file characters
 	$fh->seek($fh->getpos, SEEK_END);
-	$args{F_POS} =  $fh->getpos;
+	$args->{F_POS} =  $fh->getpos;
+	$args->{DEBUG} ||= 0;
+	$debug=$args->{DEBUG};
 
-	my $self = bless \%args, $class;
+	my $self = bless $args, $class;
 	return $self;
 }
+
+{
+
+my @data=();
 
 sub next {
 	my ($self) = @_;
 
-	my $line='';
-	if ( abs($self->{F_OFFSET}) > $self->{F_SIZE}) { return undef; }
+	print "====================================\n" if $debug;
 
-	if (abs($self->{F_OFFSET}) < $self->{F_SIZE} ) {
-		while (abs($self->{F_OFFSET}) <= $self->{F_SIZE}) {
-			$self->{FH}->seek($self->{F_OFFSET}, 2);  # seek backward
-			$self->{F_OFFSET} -= 1;
-			my $char = $self->{FH}->getc;
-			last if $char eq "\n";
-			$line = $char . $line; 
+	my $returnLine='';
+
+	if ( !$self->{SEND_BOF} && ( abs($self->{F_OFFSET}) > $self->{F_SIZE} ) ) { 
+		# have reached the beginning of the file
+		print "setting BOF = 1\n" if $debug;
+		$self->{BOF} = 1;
+	}
+
+	if ($debug) {
+		print "F_OFFSET: $self->{F_OFFSET}\n";
+		print "  F_SIZE: $self->{F_SIZE}\n";
+	}
+
+	if ( ! $self->{BOF}  && ! $self->{SEND_BOF} ) {
+
+		print "outer if\n" if $debug;
+
+		while (1) {
+
+			$self->{FH}->seek($self->{F_OFFSET}, 2);  # 2 is seek to EOF
+
+			if ( $debug ) {
+				my $tell = tell $self->{FH};
+				my $posFromEOF = $self->{F_SIZE} + $self->{F_OFFSET};
+				print "TELL: $tell\n";
+				print "Pos/EOF: $posFromEOF\n";
+			}
+
+
+			#my $char = $self->{FH}->getc;
+			my $buffer='';
+
+			if ($debug) {
+				print "CHUNKSIZE: $self->{CHUNKSIZE}\n";
+				print " F_OFFSET: $self->{F_OFFSET}\n";
+			}
+
+			my $readSize = read($self->{FH}, $buffer, $self->{CHUNKSIZE}); #, $self->{F_OFFSET} );
+
+			if ($debug) {
+				print " readSize: $readSize\n";
+				print "   buffer: $buffer\n";
+			}
+			
+			#$returnLine = $buffer;
+			#last;
+			if ( $buffer =~ /\n/ ) {
+				my @a = split(/\n/,$buffer);
+				$returnLine = pop @a;
+				$self->{F_OFFSET} -= length($returnLine) + 1;
+				last;
+			} else {
+				$returnLine .= $buffer;
+			}
+
+			$self->{F_OFFSET} -= $self->{CHUNKSIZE};
+
+			if ($debug) {
+				print "EOL F_OFFSET: $self->{F_OFFSET}\n";
+			}
+
+			#last if $char eq "\n";
+			#$line = $char . $line; 
 			# just for fun, the line will be reversed
 			#$line .= $char ;
 		}
+	} elsif ($self->{SEND_BOF}) { # is BOF
+
+			if ( $debug ) {
+				print 'SEND_BOF: ' . Dumper(\@data) . "\n";
+				my $tell = tell $self->{FH};
+				print "TELL: $tell\n";
+			}
+
+			if (scalar @data) {
+				$returnLine = pop @data;
+			} else { 
+				return undef;
+			}
+	} elsif ($self->{BOF}) { # is BOF
+		#$self->{FH}->seek($self->{F_OFFSET}+1, 2);  # 2 is seek to EOF
+		$self->{FH}->seek(0, 0);  # 2 seek to BOF
+		my $buffer;
+		my $readSize = read($self->{FH}, $buffer, $self->{CHUNKSIZE}); #, $self->{F_OFFSET} );
+		@data = split(/\n/,$buffer);
+		#print 'BOF: ' . Dumper(\@data) . "\n";
+		pop @data;
+		$self->{BOF}=0;
+		$self->{SEND_BOF}=1;
+		if ($debug) {
+			print "setting SEND_BOF\n";
+			print "     BOF: $self->{BOF}\n";
+			print "SEND_BOF: $self->{SEND_BOF}\n";
+		}
+		$returnLine = pop @data;
+	} else {
+		die "error in IO:Reverse\n";
 	}
 
-  return "$line\n";
+	print "returning $returnLine\n" if $debug;
+
+	return "$returnLine\n";
+
+}
 
 }
 
