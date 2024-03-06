@@ -128,139 +128,181 @@ sub new {
 	$args->{FH}=$fh;
 	$args->{F_SIZE} = -s $args->{FILENAME};
 	# offset starts at penultimate character in file
+
+	$args->{DEBUG} ||= 0;
+	$debug=$args->{DEBUG};
 	$args->{CHUNKSIZE} ||= 1024;
-	#$args->{F_OFFSET} = ($args->{CHUNKSIZE} + 2) * -1; # offset continually decrements to allow reverse seek
 	$args->{F_OFFSET} = $args->{CHUNKSIZE} * -1; # offset continually decrements to allow reverse seek
-	$args->{BOF} = 0; # true/false - have we reached beginning of file
-	$args->{SEND_BOF} = 0; # true/false - have we reached beginning of file
+
+	if ( $args->{CHUNKSIZE} >= abs($args->{F_SIZE}) ) {
+		$args->{CHUNKSIZE} = $args->{F_SIZE} +1; # this +1 should be become the size of the line delimiter (ie. Windows)
+		$args->{F_OFFSET} = ($args->{F_SIZE} * -1) +1 ;
+	}
+
+	$args->{BOF} ||= 0; # true/false - have we reached beginning of file - control used in loadBuffer()
+	$args->{SEND_BOF} = 0; # true/false - have we reached beginning of file - control used in next()
 
 	#die "CHUNKSIZE: $args->{CHUNKSIZE}\n";
 
 	# set to EOF minus offset 
 	# offset to avoid the end of line/file characters
 	$fh->seek($fh->getpos, SEEK_END);
+	$fh->seek($args->{F_OFFSET}, 2);
+
 	$args->{F_POS} =  $fh->getpos;
 	$args->{DEBUG} ||= 0;
-	$debug=$args->{DEBUG};
 
 	my $self = bless $args, $class;
 	return $self;
 }
 
+
+# closure to preserve buffer across calls
 {
 
-my @data=();
+my ($a,@b) = ('',());
+my ($firstChar,$lastChar) = ('','');
+
+sub loadBuffer {
+	my ($self) = @_;
+
+	pdebug("loadBuffer()\n",1);
+
+	my $buffer='';
+
+	#print Dumper($self);
+	#exit;
+
+	pdebug("chunkSize $self->{CHUNKSIZE}\n");
+	my $readSize = read($self->{FH}, $buffer, $self->{CHUNKSIZE} );	
+	pdebug("readSize: $readSize\n");
+	pdebug("buffer: $buffer\n");
+	$lastChar = substr($buffer,-1,1); 
+	pdebug("loadBuffer(): \$lastChar: ascii val: " . ord($lastChar) . " - $lastChar\n");
+	chomp $buffer;
+	#print "buffer: |$buffer|\n";
+
+	return undef unless $readSize;
+	$firstChar = substr($buffer,0,1);
+	if ($firstChar eq "\n") {
+		pdebug("loadBuffer(): \$firstChar is newline\n");
+		$buffer = substr($buffer,1);
+	}	
+
+	pdebug( "   fsize: $self->{F_SIZE}\n");
+	pdebug( "  offset: $self->{F_OFFSET}\n");
+
+	@b = split(/\n/,$buffer);
+
+	pdebug("\$a: $a\n");
+
+	if ($a)  {
+		pdebug("\n1\n");
+		if ( $lastChar eq "\n" ) {
+			push @b, $a;
+		} else {
+			$b[$#b] .= $a;
+		}
+		$a = '';
+	}
+
+	if (! $self->{BOF} and $firstChar ne "\n" ) {
+		($a) = shift(@b);
+		pdebug("\nsetting \$a: $a\n");
+	} else {
+		pdebug("\n3\n");
+		$a = '';
+	};
+
+	#print '@b: ' . Dumper(\@b);
+	if ( abs($self->{F_OFFSET}) + $self->{CHUNKSIZE} > $self->{F_SIZE} ) {
+		pdebug("new(): recalculating chunkSize and offset\n");
+		pdebug("before - fsize: $self->{F_SIZE}\n");	
+		pdebug("before - chunkSize: $self->{CHUNKSIZE}\n");	
+		pdebug("before - offset $self->{F_OFFSET}\n");	
+		$self->{CHUNKSIZE} = $self->{F_SIZE} - abs($self->{F_OFFSET}) -1;
+		
+		$self->{F_OFFSET} = ($self->{F_SIZE} * -1) +1;
+
+		pdebug("after - chunkSize: $self->{CHUNKSIZE}\n");	
+		pdebug("after - offset $self->{F_OFFSET}\n");	
+		$self->{BOF}=1;
+	} else {
+		pdebug( "new(): setting for CUR\n");
+		$self->{F_OFFSET} += ($self->{CHUNKSIZE} * -1);
+		pdebug("cur - offset $self->{F_OFFSET}\n");	
+	}
+
+	pdebug( "  offset: $self->{F_OFFSET}\n");
+	pdebug( "\n");
+
+	#print "b:\n" .  join("\n",@b) . "\n";
+	#print 'b: ' . Dumper(\@b);
+	#print join("\n",reverse @b)."\n";
+
+	#last if $self->{BOF};
+
+	#pdebug( '=' x 80 . "\n");
+	pdebug( '=' x 80 . "\n");
+
+	$self->{FH}->seek($self->{F_OFFSET}, 2);
+	
+}
 
 sub next {
 	my ($self) = @_;
 
-	print "====================================\n" if $debug;
+	return undef if $self->{SEND_BOF};
 
-	my $returnLine='';
-
-	if ( !$self->{SEND_BOF} && ( abs($self->{F_OFFSET}) > $self->{F_SIZE} ) ) { 
-		# have reached the beginning of the file
-		print "setting BOF = 1\n" if $debug;
-		$self->{BOF} = 1;
-	}
-
-	if ($debug) {
-		print "F_OFFSET: $self->{F_OFFSET}\n";
-		print "  F_SIZE: $self->{F_SIZE}\n";
-	}
-
-	if ( ! $self->{BOF}  && ! $self->{SEND_BOF} ) {
-
-		print "outer if\n" if $debug;
-
-		while (1) {
-
-			$self->{FH}->seek($self->{F_OFFSET}, 2);  # 2 is seek to EOF
-
-			if ( $debug ) {
-				my $tell = tell $self->{FH};
-				my $posFromEOF = $self->{F_SIZE} + $self->{F_OFFSET};
-				print "TELL: $tell\n";
-				print "Pos/EOF: $posFromEOF\n";
-			}
-
-
-			#my $char = $self->{FH}->getc;
-			my $buffer='';
-
-			if ($debug) {
-				print "CHUNKSIZE: $self->{CHUNKSIZE}\n";
-				print " F_OFFSET: $self->{F_OFFSET}\n";
-			}
-
-			my $readSize = read($self->{FH}, $buffer, $self->{CHUNKSIZE}); #, $self->{F_OFFSET} );
-
-			if ($debug) {
-				print " readSize: $readSize\n";
-				print "   buffer: $buffer\n";
-			}
-			
-			#$returnLine = $buffer;
-			#last;
-			if ( $buffer =~ /\n/ ) {
-				my @a = split(/\n/,$buffer);
-				$returnLine = pop @a;
-				$self->{F_OFFSET} -= length($returnLine) + 1;
-				last;
+	if (! @b ) {
+		pdebug("Calling loadBuffer()\n",1);
+		if (! $self->loadBuffer() ) {
+			$self->{SEND_BOF}=1;
+			if ($a) {
+				return "$a\n";	
 			} else {
-				$returnLine .= $buffer;
-			}
-
-			$self->{F_OFFSET} -= $self->{CHUNKSIZE};
-
-			if ($debug) {
-				print "EOL F_OFFSET: $self->{F_OFFSET}\n";
-			}
-
-			#last if $char eq "\n";
-			#$line = $char . $line; 
-			# just for fun, the line will be reversed
-			#$line .= $char ;
-		}
-	} elsif ($self->{SEND_BOF}) { # is BOF
-
-			if ( $debug ) {
-				print 'SEND_BOF: ' . Dumper(\@data) . "\n";
-				my $tell = tell $self->{FH};
-				print "TELL: $tell\n";
-			}
-
-			if (scalar @data) {
-				$returnLine = pop @data;
-			} else { 
 				return undef;
 			}
-	} elsif ($self->{BOF}) { # is BOF
-		#$self->{FH}->seek($self->{F_OFFSET}+1, 2);  # 2 is seek to EOF
-		$self->{FH}->seek(0, 0);  # 2 seek to BOF
-		my $buffer;
-		my $readSize = read($self->{FH}, $buffer, $self->{CHUNKSIZE}); #, $self->{F_OFFSET} );
-		@data = split(/\n/,$buffer);
-		#print 'BOF: ' . Dumper(\@data) . "\n";
-		pop @data;
-		$self->{BOF}=0;
-		$self->{SEND_BOF}=1;
-		if ($debug) {
-			print "setting SEND_BOF\n";
-			print "     BOF: $self->{BOF}\n";
-			print "SEND_BOF: $self->{SEND_BOF}\n";
 		}
-		$returnLine = pop @data;
-	} else {
-		die "error in IO:Reverse\n";
 	}
 
-	print "returning $returnLine\n" if $debug;
+	if (@b) {
+		pdebug("popping data from \@b\n");
+		my $r = pop @b;
+		$r = "r: $r" if $debug;
+		return "$r\n";
+	} else {
+		if ($a) {
+			my $r = $a;
+			$r = "a: $r" if $debug;
+			#$a='';
+			return "$r\n";
+		} else {
+			return undef;
+		}
+	}
 
-	return "$returnLine\n";
+	#return undef if $self->{BOF};
+
+
 
 }
 
+} # end of closure
+
+
+sub pdebug {
+	my ($s,$useBanner) = @_;
+	return unless $debug;
+	$useBanner ||= 0;
+	if ($useBanner) {
+		print "======================================\n== ";
+	}
+	print "$s";
+	if ($useBanner) {
+		print "======================================\n";
+	}
+	return;
 }
 
 1;
