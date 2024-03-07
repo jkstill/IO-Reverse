@@ -176,7 +176,7 @@ sub loadBuffer {
 	pdebug("chunkSize $self->{CHUNKSIZE}\n");
 	my $readSize = read($self->{FH}, $buffer, $self->{CHUNKSIZE} );	
 	pdebug("readSize: $readSize\n");
-	pdebug("buffer: $buffer\n");
+	pdebug("buffer: |$buffer|\n");
 	$lastChar = substr($buffer,-1,1); 
 	pdebug("loadBuffer(): \$lastChar: ascii val: " . ord($lastChar) . " - $lastChar\n");
 	chomp $buffer;
@@ -196,11 +196,15 @@ sub loadBuffer {
 
 	pdebug("\$a: $a\n");
 
+
+	# this code must have a local loop to get a complete line
+	# if chunksize is large enough, the loop will rarely be necessary
 	if ($a)  {
-		pdebug("\n1\n");
 		if ( $lastChar eq "\n" ) {
+			pdebug("loadBuffer(): push \$a -> \@b\n");
 			push @b, $a;
 		} else {
+			pdebug("loadBuffer(): append \$a to last element of \@b\n");
 			$b[$#b] .= $a;
 		}
 		$a = '';
@@ -210,7 +214,7 @@ sub loadBuffer {
 		($a) = shift(@b);
 		pdebug("\nsetting \$a: $a\n");
 	} else {
-		pdebug("\n3\n");
+		pdebug("\nre-setting \$a\n");
 		$a = '';
 	};
 
@@ -254,36 +258,37 @@ sub next {
 
 	return undef if $self->{SEND_BOF};
 
+	# if there is no data loaded by loadBuffer(), we are done
 	if (! @b ) {
 		pdebug("Calling loadBuffer()\n",1);
 		if (! $self->loadBuffer() ) {
 			$self->{SEND_BOF}=1;
 			if ($a) {
+				pdebug("next() - done: returning \$a: $a\n");
 				return "$a\n";	
 			} else {
+				pdebug("next() - done: returning undef\n");
 				return undef;
 			}
 		}
 	}
 
 	if (@b) {
-		pdebug("popping data from \@b\n");
 		my $r = pop @b;
+		pdebug("popping data from \@b \$r: $r\n");
 		$r = "r: $r" if $debug;
 		return "$r\n";
 	} else {
 		if ($a) {
 			my $r = $a;
 			$r = "a: $r" if $debug;
-			#$a='';
+			pdebug("next() - continue: returning \$a: $a\n");
 			return "$r\n";
 		} else {
+			pdebug("next() - continue: returning undef\n");
 			return undef;
 		}
 	}
-
-	#return undef if $self->{BOF};
-
 
 
 }
