@@ -6,6 +6,8 @@ use strict;
 use IO::File;
 use Fcntl;
 use Data::Dumper;
+use lib './lib';  # local Verbose.pm
+use Verbose;
 
 =head1 NAME
 
@@ -129,8 +131,20 @@ sub new {
 	$args->{F_SIZE} = -s $args->{FILENAME};
 	# offset starts at penultimate character in file
 
+	$args->{verbose} = Verbose->new(
+		{
+			VERBOSITY=>$args->{VERBOSITY},
+			LABELS=>1,
+			TIMESTAMP=>0,
+			HANDLE=>*STDERR
+		} 
+	);
+
+
+
 	$args->{DEBUG} ||= 0;
-	$debug=$args->{DEBUG};
+	#$debug=$args->{DEBUG};
+	$debug=0;
 	$args->{CHUNKSIZE} ||= 1024;
 	$args->{F_OFFSET} = $args->{CHUNKSIZE} * -1; # offset continually decrements to allow reverse seek
 
@@ -167,32 +181,34 @@ my %readHash = ();
 sub setReadParameters {
 	my ($self) = @_;
 
-	pdebug("sub setReadParameters()\n",1);
+	$self->{verbose}->print(1,"sub setReadParameters()",[]);
 
 	if ( abs($self->{F_OFFSET}) + $self->{CHUNKSIZE} > $self->{F_SIZE} ) {
-		pdebug("setReadParameters(): recalculating chunkSize and offset\n");
-		pdebug("before - fsize: $self->{F_SIZE}\n");	
-		pdebug("before - chunkSize: $self->{CHUNKSIZE}\n");	
-		pdebug("before - offset $self->{F_OFFSET}\n");	
+
+		$self->{verbose}->print(2,"setReadParameters(): recalculating chunkSize and offset",[]);
+		$self->{verbose}->print(3,"before - fsize: $self->{F_SIZE}",[]);	
+		$self->{verbose}->print(3,"before - chunkSize: $self->{CHUNKSIZE}",[]);	
+		$self->{verbose}->print(3,"before - offset $self->{F_OFFSET}",[]);	
+
 		$self->{CHUNKSIZE} = $self->{F_SIZE} - abs($self->{F_OFFSET}) -1;
 		
 		$self->{F_OFFSET} = ($self->{F_SIZE} * -1) +1;
 
-		pdebug("after - chunkSize: $self->{CHUNKSIZE}\n");	
-		pdebug("after - offset $self->{F_OFFSET}\n");	
+		$self->{verbose}->print(3,"after - chunkSize: $self->{CHUNKSIZE}",[]);	
+		$self->{verbose}->print(3,"after - offset $self->{F_OFFSET}",[]);	
+		
 		$self->{BOF}=1;
 	} else {
-		pdebug( "setReadParameters(): setting for CUR\n");
+		$self->{verbose}->print(2, "setReadParameters(): setting for CUR",[]);
 		$self->{F_OFFSET} += ($self->{CHUNKSIZE} * -1);
-		pdebug("cur - offset $self->{F_OFFSET}\n");	
+		$self->{verbose}->print(3,"cur - offset $self->{F_OFFSET}",[]);	
 	}
 
-	pdebug( "  offset: $self->{F_OFFSET}\n");
-	pdebug( "\n");
+	$self->{verbose}->print(2, "  offset: $self->{F_OFFSET}\n",[]);
 
-	if ($debug) {
+	if ($self->{VERBOSITY}) {
 		my ($package, $filename, $line) = caller;
-		pdebug("setReadParameters() returning to $package:$line\n");
+		$self->{verbose}->print(3,"setReadParameters() returning to $package:$line",[]);
 	}
 
 	return;
@@ -200,26 +216,27 @@ sub setReadParameters {
 
 
 sub initReadHash {
-	pdebug("initReadHash(): reset read variables\n",1);
+	my ($self) = @_;
+	$self->{verbose}->print(2,"initReadHash(): reset read variables",[]);
 	%readHash = (
 		READSZ => 0,
 		BUF => '',
 		LASTCHR => '',
 	);
 
-	if ($debug) {
+	if ($self->{VERBOSITY}) {
 		my ($package, $filename, $line) = caller;
-		pdebug("initReadHash() returning to $package:$line\n");
+		$self->{verbose}->print(3,"initReadHash() returning to $package:$line",[]);
 	}
 }
 
 sub dataRead {
 	my ($self) = @_;
 
-	pdebug("sub dataRead()\n", 1);
+	$self->{verbose}->print(2,"sub dataRead()", []);
 
-	pdebug("dataRead(): calling initReadHash()\n",1,'-');
-	initReadHash();
+	$self->{verbose}->print(2,"dataRead(): calling initReadHash()",[]);
+	$self->initReadHash();
 
 	#print Dumper(\%readHash);
 
@@ -228,28 +245,28 @@ sub dataRead {
 	my $iter=0;
 	#until ( $self->{BOF} or $buffer =~ /\n/ ) {
 	while(1) {
-		pdebug("dataRead() - iter: " . $iter++  . "\n");
+		$self->{verbose}->print(3,"dataRead() - iter: " . $iter++ ,[]);
 		$readHash{READSZ} = read($self->{FH}, $buffer, $self->{CHUNKSIZE} );	
-		pdebug("dataRead() - READSZ: $readHash{READSZ}\n");
-		pdebug("dataRead() - buffer:  $buffer\n");
+		$self->{verbose}->print(3,"dataRead() - READSZ: $readHash{READSZ}",[]);
+		$self->{verbose}->print(3,"dataRead() - buffer:  $buffer",[]);
 		last if $readHash{READSZ} < 1;
 		$readHash{BUF} = $buffer . $readHash{BUF};
 		$readHash{LASTCHR} = substr($readHash{BUF},-1,1) if $readHash{BUF};
-		pdebug("dataRead() - calling setReadParameters()\n",1,'-');
+		$self->{verbose}->print(3,"dataRead() - calling setReadParameters()",[]);
 		$self->setReadParameters();
 		last if $self->{BOF} or $buffer =~ /\n/ ;
-		pdebug("dataRead() - BUF: $readHash{BUF}|\n");
+		$self->{verbose}->print(3,"dataRead() - BUF: $readHash{BUF}|",[]);
 	}
 
-	pdebug("dataRead() final - BUF: $readHash{BUF}|\n");
+	$self->{verbose}->print(3,"dataRead() final - BUF: $readHash{BUF}|",[]);
 
-	pdebug(" READSZ: $readHash{READSZ}\n");
-	pdebug("    BUF: " . substr($readHash{BUF},0,80) . "\n");
-	pdebug("LASTCHR: ord(LASTCHR) " . ord($readHash{LASTCHR}) . " - $readHash{LASTCHR}\n");
+	$self->{verbose}->print(3," READSZ: $readHash{READSZ}",[]);
+	$self->{verbose}->print(3,"    BUF: " . substr($readHash{BUF},0,80), []);
+	$self->{verbose}->print(3,"LASTCHR: ord(LASTCHR) " . ord($readHash{LASTCHR}) . " - $readHash{LASTCHR}" , []);
 
-	if ($debug) {
+	if ($self->{VERBOSITY}) {
 		my ($package, $filename, $line) = caller;
-		pdebug("dataRead() returning to $package:$line\n");
+		$self->{verbose}->print(3,"dataRead() returning to $package:$line",[]);
 	}
 
 	return;
@@ -258,43 +275,40 @@ sub dataRead {
 sub loadBuffer {
 	my ($self) = @_;
 
-	pdebug("sub loadBuffer()\n",1);
+	$self->{verbose}->print(1,"sub loadBuffer()",[]);
 
-	pdebug("chunkSize: $self->{CHUNKSIZE}\n");
-	pdebug("loadBuffer() - calling dataRead()\n",1,'-');
+	$self->{verbose}->print(2,"chunkSize: $self->{CHUNKSIZE}",[]);
+	$self->{verbose}->print(2,"loadBuffer() - calling dataRead()",[]);
 	$self->dataRead();
 
-	pdebug("buffer: |$readHash{BUF}|\n");
+	$self->{verbose}->print(2,"buffer: |$readHash{BUF}|",[]);
 	$readHash{LASTCHR} = substr($readHash{BUF},-1,1); 
-	pdebug("loadBuffer(): \$readHash{LASTCHR} ascii val: " . ord($readHash{LASTCHR}) . " - $readHash{LASTCHR}\n");
+	$self->{verbose}->print(2,"loadBuffer(): \$readHash{LASTCHR} ascii val: " . ord($readHash{LASTCHR}) . " - $readHash{LASTCHR}",[]);
 	chomp $readHash{BUF};
 	#print "buffer: |$readHash{BUF}|\n";
 
 	return undef unless $readHash{READSZ};
 	$firstChar = substr($readHash{BUF},0,1);
 	if ($firstChar eq "\n") {
-		pdebug("loadBuffer(): \$firstChar is newline\n");
+		$self->{verbose}->print(2,"loadBuffer(): \$firstChar is newline",[]);
 		$readHash{BUF} = substr($readHash{BUF},1);
 	}	
 
-	pdebug( "   fsize: $self->{F_SIZE}\n");
-	pdebug( "  offset: $self->{F_OFFSET}\n");
+	$self->{verbose}->print(2, "   fsize: $self->{F_SIZE}",[]);
+	$self->{verbose}->print(2, "  offset: $self->{F_OFFSET}",[]);
 
 	@b = split(/\n/,$readHash{BUF});
 
-	if ($debug) {
-		print 'loadBuffer(): @b: ' . Dumper(\@b);
-		print 'loadBuffer(): $a: ' . "$a|\n";
-	}
+	$self->{verbose}->print(2, 'loadBuffer(): @b: ', \@b);
+	$self->{verbose}->print(2, 'loadBuffer(): $a: ' . "$a|",[]);
 
-	pdebug("loadBuffer(): \$a: $a\n");
 
 	if ($a)  {
 		if ( $readHash{LASTCHR} eq "\n" ) {
-			pdebug("loadBuffer(): push \$a -> \@b\n");
+			$self->{verbose}->print(3,"loadBuffer(): push \$a -> \@b",[]);
 			push @b, $a;
 		} else {
-			pdebug("loadBuffer(): append \$a to last element of \@b\n");
+			$self->{verbose}->print(3,"loadBuffer(): append \$a to last element of \@b",[]);
 			$b[$#b] .= $a;
 		}
 		$a = '';
@@ -307,22 +321,22 @@ sub loadBuffer {
 		#($a) = shift(@b);
 		$a = shift(@b);
 		#print "a: $a\n";
-		pdebug("\nsetting \$a: $a\n");
+		$self->{verbose}->print(3,"setting \$a: $a",[]);
 		print 'loadBuffer(): @b: ' . Dumper(\@b) if $debug;
 	} else {
-		pdebug("\nre-setting \$a\n");
+		$self->{verbose}->print(3,"re-setting \$a",[]);
 		$a = '';
 	};
 
 	$self->setReadParameters();
 
-	pdebug( '=' x 80 . "\n");
+	$self->{verbose}->print(1, '=' x 80,[]);
 
 	$self->{FH}->seek($self->{F_OFFSET}, 2);
 	
 	if ($debug) {
 		my ($package, $filename, $line) = caller;
-		pdebug("loadBuffer() returning to $package:$line\n");
+		$self->{verbose}->print(2,"loadBuffer() returning to $package:$line",[]);
 	}
 
 }
@@ -330,20 +344,20 @@ sub loadBuffer {
 sub next {
 	my ($self) = @_;
 
-	pdebug("sub next()\n",1);
+	$self->{verbose}->print(1,"sub next()",[]);
 
 	return undef if $self->{SEND_BOF};
 
 	# if there is no data loaded by loadBuffer(), we are done
 	if (! @b ) {
-		pdebug("Calling loadBuffer()\n",1,'-');
+		$self->{verbose}->print(2,"Calling loadBuffer()\n",[]);
 		if (! $self->loadBuffer() ) {
 			$self->{SEND_BOF}=1;
 			if ($a) {
-				pdebug("next() - done: returning \$a: $a\n");
+				$self->{verbose}->print(3,"next() - done: returning \$a: $a",[]);
 				return "$a\n";	
 			} else {
-				pdebug("next() - done: returning undef\n");
+				$self->{verbose}->print(3,"next() - done: returning undef",[]);
 				return undef;
 			}
 		}
@@ -351,17 +365,17 @@ sub next {
 
 	if (@b) {
 		my $r = pop @b;
-		pdebug("popping data from \@b \$r: $r\n");
+		$self->{verbose}->print(2,"popping data from \@b \$r: $r",[]);
 		$r = "r: $r" if $debug;
 		return "$r\n";
 	} else {
 		if ($a) {
 			my $r = $a;
 			$r = "a: $r" if $debug;
-			pdebug("next() - continue: returning \$a: $a\n");
+			$self->{verbose}->print(3,"next() - continue: returning \$a: $a",[]);
 			return "$r\n";
 		} else {
-			pdebug("next() - continue: returning undef\n");
+			$self->{verbose}->print(3,"next() - continue: returning undef",[]);
 			return undef;
 		}
 	}
@@ -371,26 +385,6 @@ sub next {
 
 } # end of closure
 
-
-sub pdebug {
-	my ($s,$useBanner,$bannerChar) = @_;
-	return unless $debug;
-	$bannerChar ||= '=';
-
-	$useBanner ||= 0;
-
-	my $bannerString = $bannerChar x 40;
-	if ($useBanner) {
-		print "\n";
-		print "$bannerString\n$bannerChar$bannerChar ";
-	}
-	print "$s";
-	if ($useBanner) {
-		print "$bannerString\n";
-		print "\n";
-	}
-	return;
-}
 
 1;
 
