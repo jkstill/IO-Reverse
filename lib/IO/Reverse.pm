@@ -162,65 +162,16 @@ sub new {
 
 my ($a,@b) = ('',());
 my ($firstChar,$lastChar) = ('','');
+my %readHash = ();
 
-sub loadBuffer {
+sub setReadParameters {
 	my ($self) = @_;
 
-	pdebug("loadBuffer()\n",1);
-
-	my $buffer='';
-
-	#print Dumper($self);
-	#exit;
-
-	pdebug("chunkSize $self->{CHUNKSIZE}\n");
-	my $readSize = read($self->{FH}, $buffer, $self->{CHUNKSIZE} );	
-	pdebug("readSize: $readSize\n");
-	pdebug("buffer: |$buffer|\n");
-	$lastChar = substr($buffer,-1,1); 
-	pdebug("loadBuffer(): \$lastChar: ascii val: " . ord($lastChar) . " - $lastChar\n");
-	chomp $buffer;
-	#print "buffer: |$buffer|\n";
-
-	return undef unless $readSize;
-	$firstChar = substr($buffer,0,1);
-	if ($firstChar eq "\n") {
-		pdebug("loadBuffer(): \$firstChar is newline\n");
-		$buffer = substr($buffer,1);
-	}	
-
-	pdebug( "   fsize: $self->{F_SIZE}\n");
-	pdebug( "  offset: $self->{F_OFFSET}\n");
-
-	@b = split(/\n/,$buffer);
-
-	pdebug("\$a: $a\n");
+	pdebug("setReadParameters()\n",1);
 
 
-	# this code must have a local loop to get a complete line
-	# if chunksize is large enough, the loop will rarely be necessary
-	if ($a)  {
-		if ( $lastChar eq "\n" ) {
-			pdebug("loadBuffer(): push \$a -> \@b\n");
-			push @b, $a;
-		} else {
-			pdebug("loadBuffer(): append \$a to last element of \@b\n");
-			$b[$#b] .= $a;
-		}
-		$a = '';
-	}
-
-	if (! $self->{BOF} and $firstChar ne "\n" ) {
-		($a) = shift(@b);
-		pdebug("\nsetting \$a: $a\n");
-	} else {
-		pdebug("\nre-setting \$a\n");
-		$a = '';
-	};
-
-	#print '@b: ' . Dumper(\@b);
 	if ( abs($self->{F_OFFSET}) + $self->{CHUNKSIZE} > $self->{F_SIZE} ) {
-		pdebug("new(): recalculating chunkSize and offset\n");
+		pdebug("setReadParameters(): recalculating chunkSize and offset\n");
 		pdebug("before - fsize: $self->{F_SIZE}\n");	
 		pdebug("before - chunkSize: $self->{CHUNKSIZE}\n");	
 		pdebug("before - offset $self->{F_OFFSET}\n");	
@@ -232,7 +183,7 @@ sub loadBuffer {
 		pdebug("after - offset $self->{F_OFFSET}\n");	
 		$self->{BOF}=1;
 	} else {
-		pdebug( "new(): setting for CUR\n");
+		pdebug( "setReadParameters(): setting for CUR\n");
 		$self->{F_OFFSET} += ($self->{CHUNKSIZE} * -1);
 		pdebug("cur - offset $self->{F_OFFSET}\n");	
 	}
@@ -240,13 +191,93 @@ sub loadBuffer {
 	pdebug( "  offset: $self->{F_OFFSET}\n");
 	pdebug( "\n");
 
-	#print "b:\n" .  join("\n",@b) . "\n";
-	#print 'b: ' . Dumper(\@b);
-	#print join("\n",reverse @b)."\n";
+	return;
+}
 
-	#last if $self->{BOF};
 
-	#pdebug( '=' x 80 . "\n");
+sub initReadHash {
+	%readHash = (
+		BUFSZ => 0,
+		READSZ => 0,
+		BUF => '',
+		LASTCHR => '',
+	);
+}
+
+sub dataRead {
+	my ($self) = @_;
+	initReadHash();
+
+	pdebug("dataRead()\n", 1);
+
+	#print Dumper(\%readHash);
+
+	$readHash{READSZ} = read($self->{FH}, $readHash{BUF}, $self->{CHUNKSIZE} );	
+	$readHash{BUFSZ} = $self->{CHUNKSIZE};
+	$readHash{LASTCHR} = substr($readHash{BUF},-1,1) if $readHash{BUF};
+
+	pdebug(" READSZ: $readHash{READSZ}\n");
+	pdebug("  BUFSZ: $readHash{BUFSZ}\n");
+	pdebug("    BUF: " . substr($readHash{BUF},0,80) . "\n");
+	pdebug("LASTCHR: $readHash{LASTCHR}\n");
+
+	return;
+}
+
+sub loadBuffer {
+	my ($self) = @_;
+
+	pdebug("loadBuffer()\n",1);
+
+	pdebug("chunkSize $self->{CHUNKSIZE}\n");
+	$self->dataRead();
+
+	pdebug("buffer: |$readHash{BUF}|\n");
+	$lastChar = substr($readHash{BUF},-1,1); 
+	pdebug("loadBuffer(): \$lastChar: ascii val: " . ord($lastChar) . " - $lastChar\n");
+	chomp $readHash{BUF};
+	#print "buffer: |$readHash{BUF}|\n";
+
+	return undef unless $readHash{READSZ};
+	$firstChar = substr($readHash{BUF},0,1);
+	if ($firstChar eq "\n") {
+		pdebug("loadBuffer(): \$firstChar is newline\n");
+		$readHash{BUF} = substr($readHash{BUF},1);
+	}	
+
+	pdebug( "   fsize: $self->{F_SIZE}\n");
+	pdebug( "  offset: $self->{F_OFFSET}\n");
+
+	@b = split(/\n/,$readHash{BUF});
+
+	pdebug("\$a: $a\n");
+
+	if ($a)  {
+		if ( $lastChar eq "\n" ) {
+			pdebug("loadBuffer(): push \$a -> \@b\n");
+			push @b, $a;
+		} else {
+			pdebug("loadBuffer(): append \$a to last element of \@b\n");
+			$b[$#b] .= $a;
+		}
+		$a = '';
+	}
+
+	# this code must have a local loop (or something like it)  to get a complete line
+	# when the line is larger than 2x chunksize
+	# if chunksize is large enough, the loop will rarely be necessary
+	if (! $self->{BOF} and $firstChar ne "\n" ) {
+		#($a) = shift(@b);
+		$a = shift(@b);
+		#print "a: $a\n";
+		pdebug("\nsetting \$a: $a\n");
+	} else {
+		pdebug("\nre-setting \$a\n");
+		$a = '';
+	};
+
+	$self->setReadParameters();
+
 	pdebug( '=' x 80 . "\n");
 
 	$self->{FH}->seek($self->{F_OFFSET}, 2);
