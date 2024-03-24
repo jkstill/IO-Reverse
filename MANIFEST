@@ -9,4 +9,3 @@ t/01-largefile.t
 t/manifest.t
 t/pod-coverage.t
 t/pod.t
-t/t1.pl
