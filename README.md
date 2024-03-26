@@ -1,6 +1,44 @@
 IO-Reverse
 ==========
 
+## PURPOSE
+
+The IO::Reverse module has one purpose: to read a file from the end to the beginning, presenting lines in reverse order.
+
+Example:
+
+create a test file
+
+```text
+$  cat <<-EOF > reverse-test.txt
+> this is line 1
+> this is line 2
+> this is line 3
+> this is line 4
+> this is line 5
+> EOF
+```
+
+read from EOF to BOF
+
+```text
+$  ./reverse.pl --file reverse-test.txt
+this is line 5
+this is line 4
+this is lint 3
+this is line 2
+this is line 1
+```
+
+There are other modules that may do this.
+
+There is also `tac` on Linux, which will also read a file backwards, line by line.
+
+While `tac` is about 4x faster than IO::Reverse, IO::Reverse is pure Perl that I can easily use where needed.
+
+The `tac` program when available,  may even be incorporated in a later version of IO::Reverse because it is fast.
+
+
 ## INSTALLATION
 
 To install this module, run the following commands:
